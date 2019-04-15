@@ -3,17 +3,237 @@
 <head>
     <meta charset="utf-8" />
     <title>Gamedev Phaser Workshop - lesson 01: Initialize the framework</title>
-    <style>* { padding: 0; margin: 0; }</style>
+    <style>
+      *
+      {
+        padding: 0;
+        margin: 0;
+      }
+    </style>
     <script src="js/phaser.min.js"></script>
 </head>
 <body>
 <script>
-    var game = new Phaser.Game(480, 320, Phaser.CANVAS, null, {
-      preload: preload, create: create, update: update
+  // Phaser.game: objet prenant en paramètre (width, height, méthode de rendu, id du canvas(null ici pour en créer un))
+
+  var game = new Phaser.Game(480, 320, Phaser.CANVAS, null, {
+    // Trois fonctions clées servant à créer, lancer et mettre à jour le jeu
+    preload: preload, create: create, update: update
     });
-    function preload() {}
-    function create() {}
-    function update() {}
+
+  var ball;
+  var paddle;
+  // Variable pour créer un groupe de brique
+  var bricks;
+  // Nouvel Objet définissant la brique
+  var newBrick;
+  var brickInfo;
+  // Variables pour le score
+  var scoreText;
+  var score = 0;
+  // Variables pour les vies
+  var lives = 3;
+  var livesText;
+  var lifeLostText;
+  // Variables pour le départ
+  var playing = false;
+  var startButton;
+
+  function preload()
+  {
+    // scale: gére automatiquement le scaling au chargement
+    // Option SHOW_ALL: redimensionne le canvas sans toucher au ratio
+    game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
+    // Aligne horizontalement et verticalement le canva
+    game.scale.pageAlignHorizontally = true;
+    game.scale.pageAlignVertically = true;
+    // Modifie la couleur du canvas
+    game.stage.backgroundColor = '#eee';
+    // Utilisation de l'objet Game pour charger l'image servant pour la balle
+    // On prendra notre variable ball
+    game.load.image('ball', 'img/ball.png');
+    game.load.image('paddle', 'img/paddle.png');
+    game.load.image('brick', 'img/brick.png');
+    // Chargement d'une série d'image pour l'animation
+    // avec le width et le height de chaque frame
+    game.load.spritesheet('ball', 'img/wobble.png', 20, 20);
+    // Animation pour le bouton de départ
+    game.load.spritesheet('button', 'img/button.png', 120, 40);
+  }
+  function create() {
+    // Initialisation du moteur physique du jeu, en mode Arcade Physics
+    game.physics.startSystem(Phaser.Physics.ARCADE);
+    // Désactive la collision en bas du canvas
+    game.physics.arcade.checkCollision.down = false;
+    // Pos de la balle au centre
+    ball = game.add.sprite(game.world.width*0.5, game.world.height-25, 'ball');
+    // Ajout de l'animation pour la balle
+    // Synthaxe: (nom de l'anim, tableau de séquence de l'anim, le fps)
+    ball.animations.add('wobble', [0,1,0,2,0,1,0,2,0], 24);
+    ball.anchor.set(0.5);
+    // Notre balle utilisera le système de moteur physique
+    game.physics.enable(ball, Phaser.Physics.ARCADE);
+    // Les limites du canvas seront traitées comme des murs
+    // La balle ne pourra plus passée aux travers
+    ball.body.collideWorldBounds = true;
+    // La balle rebondira sur les murs au lieu de s'y arréter
+    ball.body.bounce.set(1);
+    ball.checkWorldBounds = true;
+    // Ajout d'un event de GameOver si la balle sort du canvas
+    ball.events.onOutOfBounds.add(ballLeaveScreen, this);
+    // Création du paddle et init de sa pos x (width*0.5=milieu) et y
+    paddle = game.add.sprite(game.world.width*0.5, game.world.height-5, 'paddle');
+    // Modif de l'ancre du paddle pour le centrer
+    paddle.anchor.set(0.5,1);
+    // Ajout de la physique pour le paddle
+    game.physics.enable(paddle, Phaser.Physics.ARCADE);
+    // immovable permet au paddle de rester en place lors de la collision
+    paddle.body.immovable = true;
+    // Appel de la fonction permettant de placer les briques (voir en bas)
+    initBricks();
+    // Variable permettant la modif de police plus facilement
+    textStyle = { font: '18px Arial', fill: '#0095DD' };
+    // Ajout du texte de scrore:(pos x, pos y, 'text', font style)
+    scoreText = game.add.text(5, 5, 'Points: 0', textStyle);
+    // Ajout du text pour les vie
+    livesText = game.add.text(game.world.width-5, 5, 'Lives: '+lives, textStyle);
+    livesText.anchor.set(1,0);
+    // Texte de perte de vie, caché par défaut
+    lifeLostText = game.add.text(game.world.width*0.5, game.world.height*0.5, 'Life lost, click to continue', { font: '18px Arial', fill: '#0095DD' });
+    lifeLostText.anchor.set(0.5);
+    // On dissimule le nombre de vie perdue
+    lifeLostText.visible = false;
+    // Ajout du bouton de déaprt
+    // (pos x, pox y, nom du display, fct exécutée si pressée)
+    startButton = game.add.button(game.world.width*0.5, game.world.height*0.5, 'button', startGame, this, 1, 0, 2);
+    startButton.anchor.set(0.5);
+  }
+  // Fonction appelée à chaque frame
+  function update() {
+    // Méthode collide permettant de gérer la collision entre la balle et la paddle
+    // Joue l'animation à chaque collision avec le paddle
+    game.physics.arcade.collide(ball, paddle, ballHitPaddle);
+    // Check les collisions entre la balle et les briques
+    // Lance ballHitBrick lors d'une collision
+    game.physics.arcade.collide(ball, bricks, ballHitBrick);
+    // Gère la pos du paddle en fonction de la souris, au milieu par défaut
+    // Si la partie à commencée
+    if(playing) {
+        paddle.x = game.input.x || game.world.width*0.5;
+    }
+  }
+
+  function initBricks() {
+    // brickInfo contient toute les infos des briques
+    brickInfo = {
+      // Dimension
+      width: 50,
+      height: 20,
+      // Nbr de lignes et de colonnes
+      count: {
+          row: 3,
+          col: 7
+      },
+      // Commence décallé en haut à gauche
+      offset: {
+          top: 50,
+          left: 60
+      },
+      padding: 10
+    };
+    bricks = game.add.group();
+    for(c=0; c<brickInfo.count.col; c++)
+    {
+      for(r=0; r<brickInfo.count.row; r++)
+      {
+        // Pos (x, y) des briques variant pour chaque brique
+        var brickX = (c*(brickInfo.width+brickInfo.padding))+brickInfo.offset.left;
+        var brickY = (r*(brickInfo.height+brickInfo.padding))+brickInfo.offset.top;
+        // Création de la brique
+        newBrick = game.add.sprite(brickX, brickY, 'brick');
+        // Application de la physique aux briques
+        game.physics.enable(newBrick, Phaser.Physics.ARCADE);
+        newBrick.body.immovable = true;
+        newBrick.anchor.set(0.5);
+        bricks.add(newBrick);
+      }
+    }
+  }
+  // Fonction suite à la collision brique / balle
+  function ballHitBrick(ball, brick)
+  {
+    // Tween: animation des modif de propriétés d'un object
+    // Var prenant le tween ciblant la taille de la brique
+    var killTween = game.add.tween(brick.scale);
+    // On modif le scale de la brique jusqu'à 0 (1=100%; 0=0%) linéarement en 200ms
+    killTween.to({x:0,y:0}, 200, Phaser.Easing.Linear.None);
+    // Une fois fini on lance la fonction détruisant la brique
+    killTween.onComplete.addOnce(function(){
+      brick.kill();
+    }, this);
+    killTween.start();
+    // Incrémentation du score
+    score += 10;
+    scoreText.setText('Points: '+score);
+    // Partie servant pour la victoire
+    // Initialisation du nombre de brique en vie
+    var count_alive = 0;
+    // On parcours toute les briques en vie pour incrémenter la variable
+    for (i = 0; i < bricks.children.length; i++)
+    {
+      // Si la brique est en vie
+      if (bricks.children[i].alive == true)
+      {
+        // Incrémentation
+        count_alive++;
+      }
+    }
+    // S'il n'y a plus de briques en vie
+    if (count_alive == 0)
+    {
+      // Victoire
+      alert('You won the game, congratulations!');
+      location.reload();
+    }
+  }
+  // Fonction utilisée lors de la sortie de la balle
+  function ballLeaveScreen() {
+    // On décrémente les vies
+    lives--;
+    // Si lives=true (s'il reste des vie)
+    if(lives) {
+      // On change le compteur de vie
+      livesText.setText('Lives: '+lives);
+      // Affichage du texte vie perdu
+      lifeLostText.visible = true;
+      // On reset la balle et le paddle
+      ball.reset(game.world.width*0.5, game.world.height-25);
+      paddle.reset(game.world.width*0.5, game.world.height-5);
+      game.input.onDown.addOnce(function(){
+        // On recache le texte vie perdu
+        lifeLostText.visible = false;
+        ball.body.velocity.set(150, -150);
+      }, this);
+    }
+    // Si lives=false (plus de vie)
+    else {
+        alert('You lost, game over!');
+        location.reload();
+    }
+  }
+  // Fonction jouant l'animation
+  function ballHitPaddle(ball, paddle) {
+      ball.animations.play('wobble');
+      ball.body.velocity.x = -1*5*(paddle.x-ball.x);
+  }
+  // Fonction de lancement du jeu
+  function startGame() {
+    // Efface le bouton
+    startButton.destroy();
+    // Lance la balle
+    ball.body.velocity.set(150, -150);
+    playing = true;
+  }
 </script>
 </body>
 </html>
